@@ -1,0 +1,1384 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>รพ.โพนสวรรค์ - ระบบบันทึกการความสะอาดห้องน้ำ</title>
+  
+  <!-- โหลด Tailwind CSS สำหรับตกแต่งเว็บ -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- ตั้งค่า Import Map เพื่อให้ใช้งาน React และ Lucide Icons ในไฟล์ HTML ไฟล์เดียวได้ -->
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.323.0"
+      }
+    }
+  </script>
+  
+  <!-- โหลด Babel สำหรับคอมไพล์ JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap');
+    body { 
+      font-family: 'Sarabun', 'Inter', sans-serif; 
+      background-color: #f8fafc; 
+    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    /* ซ่อนไอคอนลูกตาอัตโนมัติของเบราว์เซอร์ Edge / IE ไม่ให้ซ้อนกัน */
+    input::-ms-reveal,
+    input::-ms-clear {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <!-- จุดที่จะนำ React มาแสดงผล -->
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useMemo, useCallback } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { 
+      CheckCircle2, Settings, BarChart3, FileText, LogOut, User, MapPin, ShieldCheck, 
+      Menu, X, Calendar, Filter, Download, History, RefreshCw, AlertCircle, Eye, EyeOff,
+      Wifi, WifiOff, Trash2
+    } from 'lucide-react';
+
+    // ==========================================
+    // ลิงก์ Google Apps Script ของคุณ
+    // ==========================================
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzadSR3CYKrcNeAmF_KlWZ1-D2jkTPjx8NpDqv0bCh2xeqXRXBXEHLE7eDDhZrwP8DPCA/exec";
+
+    // ข้อมูลจุดทำความสะอาดตั้งต้น
+    const DEFAULT_LOCATIONS = [
+      "แผนกผู้ป่วยนอก (OPD)",
+      "แผนกอุบัติเหตุและฉุกเฉิน (ER)",
+      "ตึกผู้ป่วยใน ชั้น 1",
+      "ตึกผู้ป่วยใน ชั้น 2",
+      "ห้องน้ำเจ้าหน้าที่ (ตึกอำนวยการ)",
+      "บริเวณโรงอาหาร"
+    ];
+
+    const CHECKLIST_ITEMS = [
+      { id: 'floor', label: 'พื้น', category: 'เรื่องความสะอาด' },
+      { id: 'wall_ceiling', label: 'ผนัง,เพดาน', category: 'เรื่องความสะอาด' },
+      { id: 'toilet', label: 'โถส้วม/โถปัสสาวะ', category: 'เรื่องความสะอาด' },
+      { id: 'bidet', label: 'สายฉีดชำระ/ขัน/อ่างน้ำ', category: 'เรื่องความสะอาด' },
+      { id: 'sink', label: 'อ่าง ก๊อก', category: 'เรื่องความสะอาด' },
+      { id: 'mirror', label: 'กระจก', category: 'เรื่องความสะอาด' },
+      { id: 'trash', label: 'ถังขยะ', category: 'เรื่องความสะอาด' },
+      { id: 'soap', label: 'สบู่ล้างมือ', category: 'เรื่องความสะดวก' },
+      { id: 'tissue', label: 'ทิชชู/ผ้าเช็ดมือ', category: 'เรื่องความสะดวก' }
+    ];
+
+    // ฟังก์ชันแปลงวันที่จาก Google Sheets ให้เป็นรูปแบบ YYYY-MM-DD เสมอ
+    const normalizeDate = (val) => {
+      if (!val) return '';
+      const str = String(val).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+      return str;
+    };
+
+    // ฟังก์ชันแปลงเวลาจาก Google Sheets ให้เป็นรูปแบบ HH:mm เสมอ
+    const normalizeTime = (val) => {
+      if (!val) return '';
+      const str = String(val).trim();
+      if (/^\d{2}:\d{2}/.test(str)) return str.substring(0, 5);
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        const hours = String(d.getHours()).padStart(2, '0');
+        const mins = String(d.getMinutes()).padStart(2, '0');
+        return `${hours}:${mins}`;
+      }
+      return str;
+    };
+
+    const getTodayString = () => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
+    // ==========================================
+    // คอมโพเนนต์ฝั่งเจ้าหน้าที่ (แยกออกนอก App เพื่อป้องกันหน้าจอรีเฟรชทับป๊อปอัพ)
+    // ==========================================
+    function CleanerForm({ locations, onBackHome, onAddReportSuccess }) {
+      const [formData, setFormData] = useState({
+        cleanerName: '',
+        location: '',
+        checklist: CHECKLIST_ITEMS.reduce((acc, item) => ({ ...acc, [item.id]: true }), {}),
+        damaged: CHECKLIST_ITEMS.reduce((acc, item) => ({ ...acc, [item.id]: 0 }), {}),
+        notes: ''
+      });
+      const [isSubmitting, setIsSubmitting] = useState(false);
+      const [showSuccessPopup, setShowSuccessPopup] = useState(false);
+      const [savedLocationName, setSavedLocationName] = useState('');
+      const [formError, setFormError] = useState('');
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setFormError('');
+
+        if (!formData.cleanerName.trim()) {
+          setFormError('กรุณากรอกชื่อเจ้าหน้าที่ผู้ปฏิบัติงาน');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
+        if (!formData.location) {
+          setFormError('กรุณาเลือกจุดห้องน้ำที่ทำความสะอาด');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
+
+        setIsSubmitting(true);
+        const now = new Date();
+        const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+        const newReport = {
+          id: now.getTime().toString(),
+          cleanerName: formData.cleanerName.trim(),
+          location: formData.location,
+          date: dateStr,
+          time: timeStr,
+          checklist: formData.checklist,
+          damaged: formData.damaged,
+          notes: formData.notes.trim()
+        };
+
+        try {
+          await fetch(GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({ action: 'addReport', data: newReport })
+          });
+
+          setSavedLocationName(formData.location);
+          onAddReportSuccess(newReport);
+          setShowSuccessPopup(true);
+        } catch (err) {
+          console.error("Submit error:", err);
+          setFormError("เกิดข้อผิดพลาดในการเชื่อมต่ออินเทอร์เน็ต กรุณาลองอีกครั้ง");
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-50 flex flex-col relative">
+          <header className="bg-green-600 text-white p-4 shadow-md sticky top-0 z-20 flex items-center">
+            <button onClick={onBackHome} className="mr-3 p-1.5 hover:bg-green-700 rounded-lg transition-colors">
+              <X className="w-6 h-6" />
+            </button>
+            <h1 className="text-xl font-bold flex-1">บันทึกการทำความสะอาด</h1>
+          </header>
+
+          <main className="flex-1 p-4 flex justify-center pb-8">
+            <div className="max-w-lg w-full bg-white rounded-2xl shadow-sm p-5 md:p-6 h-fit border border-slate-100">
+              {formError && (
+                <div className="mb-6 p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-center gap-2.5 text-sm font-bold">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-500" />
+                  {formError}
+                </div>
+              )}
+
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <div className="space-y-5">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                      ชื่อเจ้าหน้าที่ <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <User className="w-5 h-5 absolute left-3 top-3 text-slate-400" />
+                      <input 
+                        type="text" 
+                        placeholder="กรอกชื่อ-นามสกุล..."
+                        className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all"
+                        value={formData.cleanerName}
+                        onChange={e => setFormData({ ...formData, cleanerName: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                      จุดทำความสะอาด <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <MapPin className="w-5 h-5 absolute left-3 top-3 text-slate-400" />
+                      <select 
+                        className={`w-full pl-10 pr-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none appearance-none bg-white transition-all ${!formData.location ? 'text-slate-400 border-slate-300' : 'text-slate-800 border-green-500 font-semibold'}`}
+                        value={formData.location}
+                        onChange={e => setFormData({ ...formData, location: e.target.value })}
+                      >
+                        <option value="" disabled>-- เลือกจุดห้องน้ำ --</option>
+                        {locations.map(loc => (
+                          <option key={loc} value={loc} className="text-slate-800">{loc}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {}
+                <div className="space-y-6 pt-2">
+                  {['เรื่องความสะอาด', 'เรื่องความสะดวก'].map((category, idx) => (
+                    <div key={category} className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                      <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
+                        <span className={`w-6 h-6 rounded-full text-white flex items-center justify-center text-xs ${idx === 0 ? 'bg-blue-500' : 'bg-purple-500'}`}>
+                          {idx + 1}
+                        </span>
+                        {category}
+                      </h3>
+                      <div className="space-y-3">
+                        {CHECKLIST_ITEMS.filter(item => item.category === category).map(item => {
+                          const isYes = formData.checklist[item.id] === true;
+                          const isNo = formData.checklist[item.id] === false;
+                          
+                          return (
+                            <div key={item.id} className="p-3 bg-white border border-slate-200 rounded-xl flex flex-col gap-3 shadow-sm">
+                              <div className="font-semibold text-slate-700 text-sm">{item.label}</div>
+                              <div className="flex flex-col sm:flex-row gap-2">
+                                <div className="flex rounded-lg w-full sm:flex-1 shadow-sm">
+                                  <button
+                                    type="button"
+                                    onClick={() => setFormData({ ...formData, checklist: { ...formData.checklist, [item.id]: true } })}
+                                    className={`flex-1 py-2 text-sm font-bold rounded-l-lg border transition-all ${isYes ? 'bg-green-500 text-white border-green-500 z-10 shadow-inner' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'}`}
+                                  >
+                                    {item.category === 'เรื่องความสะดวก' ? 'มี' : 'ทำแล้ว'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setFormData({ ...formData, checklist: { ...formData.checklist, [item.id]: false } })}
+                                    className={`flex-1 py-2 text-sm font-bold rounded-r-lg border-y border-r transition-all ${isNo ? 'bg-red-500 text-white border-red-500 z-10 shadow-inner' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'}`}
+                                  >
+                                    {item.category === 'เรื่องความสะดวก' ? 'ไม่มี' : 'ไม่ได้ทำ'}
+                                  </button>
+                                </div>
+                                
+                                {}
+                                <div className="flex items-center justify-between sm:justify-center gap-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
+                                  <span className="text-xs font-semibold text-slate-600">ชำรุด:</span>
+                                  <div className="flex items-center bg-white border border-slate-300 rounded-md overflow-hidden shadow-sm">
+                                    <button 
+                                      type="button" 
+                                      onClick={() => setFormData(prev => ({ ...prev, damaged: { ...prev.damaged, [item.id]: Math.max(0, (prev.damaged[item.id] || 0) - 1) } }))} 
+                                      className="w-7 h-7 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold"
+                                    >
+                                      -
+                                    </button>
+                                    <input 
+                                      type="number" 
+                                      readOnly 
+                                      min="0" 
+                                      className="w-10 h-7 py-0 border-x border-slate-300 text-center text-sm font-bold text-slate-800 outline-none bg-white"
+                                      value={formData.damaged[item.id] || 0}
+                                    />
+                                    <button 
+                                      type="button" 
+                                      onClick={() => setFormData(prev => ({ ...prev, damaged: { ...prev.damaged, [item.id]: (prev.damaged[item.id] || 0) + 1 } }))} 
+                                      className="w-7 h-7 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {}
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1.5">ข้อแนะนำ / ความเสี่ยงที่พบ (ถ้ามี)</label>
+                  <textarea 
+                    rows="3" 
+                    placeholder="ระบุข้อความเพิ่มเติม เช่น ท่อตัน, หลอดไฟขาด..."
+                    className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none resize-none"
+                    value={formData.notes}
+                    onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                  ></textarea>
+                </div>
+
+                <button 
+                  type="submit" 
+                  disabled={isSubmitting}
+                  className={`w-full text-white font-bold text-lg py-4 rounded-xl shadow-lg transition-all flex justify-center items-center gap-2 ${isSubmitting ? 'bg-slate-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 active:scale-[0.98]'}`}
+                >
+                  {isSubmitting ? (
+                    <><RefreshCw className="w-5 h-5 animate-spin" /> กำลังบันทึกข้อมูล...</>
+                  ) : (
+                    <><CheckCircle2 className="w-6 h-6" /> บันทึกการตรวจเช็ค</>
+                  )}
+                </button>
+              </form>
+            </div>
+          </main>
+
+          {}
+          {/* ป๊อปอัพสีเขียวเมื่อบันทึกสำเร็จ */}
+          {showSuccessPopup && (
+            <div className="fixed inset-0 bg-slate-900/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+              <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-sm text-center">
+                <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-5 shadow-inner">
+                  <CheckCircle2 className="w-14 h-14 text-green-500" />
+                </div>
+                <h3 className="text-2xl font-bold text-slate-800 mb-2">บันทึกข้อมูลสำเร็จแล้ว!</h3>
+                <p className="text-slate-600 mb-6">
+                  ข้อมูลห้องน้ำจุด <br/>
+                  <span className="font-bold text-green-700 text-lg">{savedLocationName}</span><br/>
+                  ถูกบันทึกลงฐานข้อมูลเรียบร้อยแล้ว
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSuccessPopup(false);
+                    onBackHome();
+                  }}
+                  className="w-full bg-green-600 text-white font-bold py-3.5 rounded-xl hover:bg-green-700 transition-colors shadow-md text-lg"
+                >
+                  ตกลง (กลับหน้าแรก)
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ==========================================
+    // คอมโพเนนต์เข้าสู่ระบบผู้ดูแล (Admin Login)
+    // ==========================================
+    function AdminLogin({ adminPassword, onLoginSuccess, onBackHome }) {
+      const [inputPassword, setInputPassword] = useState('');
+      const [error, setError] = useState('');
+      const [showPassword, setShowPassword] = useState(false);
+
+      const handleLogin = (e) => {
+        e.preventDefault();
+        if (inputPassword === adminPassword) {
+          onLoginSuccess();
+        } else {
+          setError('รหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง');
+        }
+      };
+
+      return (
+        <div className="min-h-screen flex items-center justify-center p-4 bg-slate-100">
+          <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-8">
+            <div className="text-center mb-8">
+              <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <ShieldCheck className="w-10 h-10 text-blue-600" />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-800">เข้าสู่ระบบผู้ดูแล</h2>
+              <p className="text-slate-500 font-medium mt-1">รพ.โพนสวรรค์ (เฉพาะแอดมิน)</p>
+            </div>
+
+            <form onSubmit={handleLogin} className="space-y-6">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">รหัสผ่านผู้ดูแลระบบ</label>
+                <div className="relative">
+                  <input 
+                    type={showPassword ? "text" : "password"} 
+                    autoFocus
+                    className={`w-full p-4 pr-14 border rounded-xl text-center text-lg font-bold outline-none transition-all ${error ? 'border-red-500 focus:ring-2 focus:ring-red-200' : 'border-slate-300 focus:ring-2 focus:ring-blue-500'}`}
+                    value={inputPassword}
+                    onChange={e => { setInputPassword(e.target.value); setError(''); }}
+                    placeholder="กรอกรหัสผ่าน"
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    title={showPassword ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-slate-400 hover:text-slate-600 transition-colors rounded-lg"
+                  >
+                    {showPassword ? <EyeOff className="w-6 h-6" /> : <Eye className="w-6 h-6" />}
+                  </button>
+                </div>
+                {error && <p className="text-red-500 text-sm mt-2 text-center font-bold">{error}</p>}
+              </div>
+              <div className="flex gap-3">
+                <button 
+                  type="button" 
+                  onClick={onBackHome} 
+                  className="flex-1 bg-slate-100 text-slate-700 font-bold py-3.5 rounded-xl hover:bg-slate-200 transition-colors"
+                >
+                  กลับ
+                </button>
+                <button 
+                  type="submit" 
+                  className="flex-1 bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition-colors shadow-md"
+                >
+                  เข้าสู่ระบบ
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // คอมโพเนนต์หน้าแดชบอร์ดผู้ดูแลระบบ (Admin Dashboard)
+    // ==========================================
+    function AdminDashboard({
+      locations,
+      setLocations,
+      reports,
+      exportLogs,
+      setExportLogs,
+      adminPassword,
+      setAdminPassword,
+      isLoading,
+      connectionStatus,
+      onRefreshData,
+      onLogout,
+      showToast
+    }) {
+      const [activeTab, setActiveTab] = useState(() => localStorage.getItem('ps_active_tab') || 'overview');
+      const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+      const [dashboardDate, setDashboardDate] = useState(getTodayString);
+      const [viewingReport, setViewingReport] = useState(null);
+      const [locationToDelete, setLocationToDelete] = useState(null);
+
+      // Filter States
+      const [filterLocation, setFilterLocation] = useState('all');
+      const [dateRange, setDateRange] = useState(() => {
+        const end = getTodayString();
+        const startObj = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const start = `${startObj.getFullYear()}-${String(startObj.getMonth() + 1).padStart(2, '0')}-${String(startObj.getDate()).padStart(2, '0')}`;
+        return { start, end };
+      });
+
+      // Settings States
+      const [newLocationInput, setNewLocationInput] = useState('');
+      const [pwdState, setPwdState] = useState({ old: '', new: '', confirm: '', msg: '', type: '' });
+      const [showSettingPasswords, setShowSettingPasswords] = useState(false);
+
+      useEffect(() => {
+        localStorage.setItem('ps_active_tab', activeTab);
+      }, [activeTab]);
+
+      const reportsForDashboardDate = useMemo(() => {
+        return reports.filter(r => r.date === dashboardDate);
+      }, [reports, dashboardDate]);
+
+      const locationsCleanedToday = useMemo(() => {
+        return new Set(reportsForDashboardDate.map(r => r.location));
+      }, [reportsForDashboardDate]);
+
+      const totalLocationsCount = locations.length;
+      const cleanedLocationsCount = locations.filter(loc => locationsCleanedToday.has(loc)).length;
+      const pendingLocationsCount = Math.max(0, totalLocationsCount - cleanedLocationsCount);
+      const completionPercentage = totalLocationsCount === 0 ? 0 : Math.round((cleanedLocationsCount / totalLocationsCount) * 100);
+
+      const filteredReports = useMemo(() => {
+        return reports.filter(r => {
+          const matchLoc = filterLocation === 'all' || r.location === filterLocation;
+          const matchDate = r.date >= dateRange.start && r.date <= dateRange.end;
+          return matchLoc && matchDate;
+        });
+      }, [reports, filterLocation, dateRange]);
+
+      const handleChangePassword = (e) => {
+        e.preventDefault();
+        if (pwdState.old !== adminPassword) {
+          setPwdState({ ...pwdState, msg: 'รหัสผ่านเดิมไม่ถูกต้อง', type: 'error' });
+          return;
+        }
+        if (pwdState.new !== pwdState.confirm) {
+          setPwdState({ ...pwdState, msg: 'รหัสผ่านใหม่ไม่ตรงกัน', type: 'error' });
+          return;
+        }
+        if (pwdState.new.length < 6) {
+          setPwdState({ ...pwdState, msg: 'ความยาวอย่างน้อย 6 ตัวอักษร', type: 'error' });
+          return;
+        }
+        setAdminPassword(pwdState.new);
+        setPwdState({ old: '', new: '', confirm: '', msg: 'เปลี่ยนรหัสผ่านสำเร็จ!', type: 'success' });
+        showToast("เปลี่ยนรหัสผ่านสำเร็จ");
+      };
+
+      const handleAddLocation = async (e) => {
+        e.preventDefault();
+        const trimmed = newLocationInput.trim();
+        if (!trimmed) return;
+        if (locations.includes(trimmed)) {
+          showToast("มีจุดนี้ในระบบแล้ว");
+          return;
+        }
+
+        try {
+          await fetch(GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({ action: 'addLocation', location: trimmed })
+          });
+          setLocations(prev => [...prev, trimmed]);
+          setNewLocationInput('');
+          showToast("เพิ่มจุดห้องน้ำสำเร็จ");
+        } catch (err) {
+          showToast("เกิดข้อผิดพลาดในการเพิ่มจุด");
+        }
+      };
+
+      const confirmDeleteLocation = async () => {
+        if (!locationToDelete) return;
+        const loc = locationToDelete;
+        setLocationToDelete(null);
+        try {
+          await fetch(GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({ action: 'deleteLocation', location: loc })
+          });
+          setLocations(prev => prev.filter(l => l !== loc));
+          showToast(`ลบจุด "${loc}" สำเร็จ`);
+        } catch (err) {
+          showToast("เกิดข้อผิดพลาดในการลบจุด");
+        }
+      };
+
+      const handleExportCSV = () => {
+        if (filteredReports.length === 0) {
+          showToast("ไม่มีข้อมูลในเงื่อนไขที่เลือก");
+          return;
+        }
+
+        const headers = [
+          'รหัสอ้างอิง', 'วันที่', 'เวลา', 'จุดทำความสะอาด', 'เจ้าหน้าที่',
+          ...CHECKLIST_ITEMS.flatMap(item => [item.label, `${item.label} (ชำรุด)`]),
+          'ข้อแนะนำ/ความเสี่ยงที่พบ'
+        ];
+        const rows = filteredReports.map(r => [
+          r.id,
+          r.date,
+          r.time,
+          `"${(r.location || '').replace(/"/g, '""')}"`,
+          `"${(r.cleanerName || '').replace(/"/g, '""')}"`,
+          ...CHECKLIST_ITEMS.flatMap(item => [
+            r.checklist?.[item.id] ? (item.category === 'เรื่องความสะดวก' ? 'มี' : 'ทำแล้ว') : (item.category === 'เรื่องความสะดวก' ? 'ไม่มี' : 'ไม่ได้ทำ'),
+            r.damaged?.[item.id] || 0
+          ]),
+          `"${(r.notes || '').replace(/"/g, '""')}"`
+        ]);
+
+        const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `restroom_report_${dateRange.start}_to_${dateRange.end}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        const newLog = {
+          id: Date.now(),
+          timestamp: new Date().toLocaleString('th-TH'),
+          filterLocation: filterLocation === 'all' ? 'ทั้งหมดรวมทุกจุด' : filterLocation,
+          dateStart: dateRange.start,
+          dateEnd: dateRange.end,
+          recordCount: filteredReports.length
+        };
+        setExportLogs(prev => [newLog, ...prev]);
+        showToast('ส่งออกไฟล์ Excel/CSV สำเร็จ');
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-100 flex">
+          {/* Sidebar Navigation */}
+          <nav className={`fixed inset-y-0 left-0 w-64 bg-slate-900 text-slate-300 transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 transition-transform duration-200 z-30 flex flex-col`}>
+            <div className="p-5 bg-slate-950 flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <ShieldCheck className="w-8 h-8 text-blue-500" />
+                <span className="text-white font-bold text-lg">Admin Panel</span>
+              </div>
+              <button className="md:hidden text-slate-400" onClick={() => setIsMobileMenuOpen(false)}>
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="flex-1 py-4 flex flex-col gap-2 px-3">
+              {[
+                { id: 'overview', icon: <BarChart3 className="w-5 h-5" />, label: 'ภาพรวมรายวัน' },
+                { id: 'reports', icon: <FileText className="w-5 h-5" />, label: 'รายงานการประเมิน' },
+                { id: 'export_logs', icon: <History className="w-5 h-5" />, label: 'ประวัติการดึงข้อมูล' },
+                { id: 'settings', icon: <Settings className="w-5 h-5" />, label: 'ตั้งค่าระบบ' }
+              ].map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }}
+                  className={`flex items-center gap-3 p-3.5 rounded-xl transition-all font-medium ${activeTab === item.id ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}
+                >
+                  {item.icon} {item.label}
+                </button>
+              ))}
+            </div>
+            <div className="p-4 bg-slate-950">
+              <button
+                type="button"
+                onClick={onLogout}
+                className="flex items-center justify-center gap-2 p-3 w-full rounded-xl text-red-400 font-bold hover:bg-red-500 hover:text-white transition-colors"
+              >
+                <LogOut className="w-5 h-5" /> ออกจากระบบ
+              </button>
+            </div>
+          </nav>
+
+          {isMobileMenuOpen && (
+            <div className="fixed inset-0 bg-slate-900/60 z-20 md:hidden backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)}></div>
+          )}
+
+          {}
+          <main className="flex-1 md:ml-64 flex flex-col h-screen overflow-hidden">
+            <header className="bg-white p-4 border-b border-slate-200 flex items-center justify-between sticky top-0 z-10 shadow-sm">
+              <div className="flex items-center gap-3 md:hidden">
+                <button type="button" onClick={() => setIsMobileMenuOpen(true)} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 transition-colors">
+                  <Menu className="w-6 h-6" />
+                </button>
+                <span className="font-bold text-slate-800">แอดมิน รพ.โพนสวรรค์</span>
+              </div>
+              <div className="hidden md:flex items-center gap-3">
+                <span className="font-bold text-slate-800 text-lg">รพ.โพนสวรรค์ - ระบบตรวจเช็คห้องน้ำ</span>
+                {connectionStatus === 'connected' && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-200">
+                    <Wifi className="w-3.5 h-3.5 text-green-600" /> เชื่อมต่อ Google Sheets แล้ว
+                  </span>
+                )}
+                {connectionStatus === 'error' && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200">
+                    <WifiOff className="w-3.5 h-3.5 text-red-600" /> เชื่อมต่อฐานข้อมูลไม่สำเร็จ
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => onRefreshData(true)}
+                  disabled={isLoading}
+                  className={`flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors font-bold text-sm ${isLoading ? 'opacity-60 cursor-wait' : ''}`}
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-blue-600' : ''}`} />
+                  <span>{isLoading ? 'กำลังอัปเดต...' : 'รีเฟรชข้อมูล'}</span>
+                </button>
+              </div>
+            </header>
+
+            {}
+            <div className="flex-1 p-4 md:p-8 overflow-y-auto">
+              {/* ---------------- DASHBOARD ---------------- */}
+              {activeTab === 'overview' && (
+                <div className="space-y-6 max-w-6xl mx-auto">
+                  <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-200 gap-4">
+                    <h2 className="text-xl font-bold text-slate-800">แดชบอร์ดสรุปผลรายวัน</h2>
+                    <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200 w-full sm:w-auto">
+                      <Calendar className="w-5 h-5 text-blue-600 ml-2" />
+                      <input
+                        type="date"
+                        className="bg-transparent border-none focus:ring-0 text-slate-800 font-bold outline-none flex-1"
+                        value={dashboardDate}
+                        onChange={(e) => setDashboardDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                      <div className="flex justify-between items-center mb-2">
+                        <h3 className="text-slate-500 font-bold text-sm">ภาพรวมความคืบหน้า</h3>
+                        <div className="p-2 bg-indigo-100 rounded-lg"><BarChart3 className="w-5 h-5 text-indigo-600" /></div>
+                      </div>
+                      <div className="text-3xl font-black text-slate-800">{completionPercentage}%</div>
+                      <div className="w-full bg-slate-100 rounded-full h-2.5 mt-3 overflow-hidden">
+                        <div className={`h-2.5 rounded-full transition-all duration-500 ${completionPercentage === 100 ? 'bg-green-500' : 'bg-indigo-500'}`} style={{ width: `${completionPercentage}%` }}></div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                      <div className="flex justify-between items-center mb-2">
+                        <h3 className="text-slate-500 font-bold text-sm">จำนวนรอบบันทึกรวม</h3>
+                        <div className="p-2 bg-blue-100 rounded-lg"><FileText className="w-5 h-5 text-blue-600" /></div>
+                      </div>
+                      <div className="text-3xl font-black text-slate-800">{reportsForDashboardDate.length} <span className="text-sm font-medium text-slate-500">ครั้ง</span></div>
+                    </div>
+
+                    <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                      <div className="flex justify-between items-center mb-2">
+                        <h3 className="text-slate-500 font-bold text-sm">จุดที่ประเมินแล้ว</h3>
+                        <div className="p-2 bg-green-100 rounded-lg"><CheckCircle2 className="w-5 h-5 text-green-600" /></div>
+                      </div>
+                      <div className="text-3xl font-black text-slate-800">{cleanedLocationsCount} <span className="text-sm font-medium text-slate-500">/ {totalLocationsCount} จุด</span></div>
+                    </div>
+
+                    <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                      <div className="flex justify-between items-center mb-2">
+                        <h3 className="text-slate-500 font-bold text-sm">จุดที่ยังไม่ทำ</h3>
+                        <div className="p-2 bg-red-100 rounded-lg"><X className="w-5 h-5 text-red-600" /></div>
+                      </div>
+                      <div className="text-3xl font-black text-slate-800">{pendingLocationsCount} <span className="text-sm font-medium text-slate-500">จุด</span></div>
+                    </div>
+                  </div>
+
+                  {}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="bg-slate-50 p-4 border-b border-slate-200 font-bold text-slate-800">
+                      สถานะรายจุด ประจำวันที่ {dashboardDate}
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {locations.map(loc => {
+                        const locReports = reportsForDashboardDate.filter(r => r.location === loc);
+                        const isDone = locReports.length > 0;
+                        return (
+                          <div key={loc} className="p-4 flex flex-col sm:flex-row justify-between sm:items-center hover:bg-slate-50 transition-colors gap-3">
+                            <div className="flex items-center gap-3">
+                              {isDone ? (
+                                <CheckCircle2 className="w-6 h-6 text-green-500 flex-shrink-0" />
+                              ) : (
+                                <div className="w-6 h-6 rounded-full border-2 border-red-200 bg-red-50 flex-shrink-0 flex items-center justify-center">
+                                  <X className="w-3.5 h-3.5 text-red-500" />
+                                </div>
+                              )}
+                              <div>
+                                <div className={`font-bold ${isDone ? 'text-slate-800' : 'text-slate-600'}`}>{loc}</div>
+                                {!isDone && <div className="text-xs font-bold text-red-500 mt-0.5">ยังไม่มีการลงบันทึกในวันนี้</div>}
+                              </div>
+                            </div>
+                            {isDone && (
+                              <div className="flex flex-wrap gap-2 sm:justify-end ml-9 sm:ml-0">
+                                {locReports.map(rep => (
+                                  <button
+                                    key={rep.id}
+                                    type="button"
+                                    onClick={() => setViewingReport(rep)}
+                                    className="text-xs font-bold bg-green-50 hover:bg-green-100 border border-green-200 text-green-700 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-colors"
+                                  >
+                                    {rep.time} น. <span className="text-green-600/50">|</span> {rep.cleanerName}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {}
+              {/* ---------------- REPORTS ---------------- */}
+              {activeTab === 'reports' && (
+                <div className="flex flex-col h-full space-y-4 max-w-7xl mx-auto">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <h2 className="text-2xl font-bold text-slate-800">รายงานการประเมิน</h2>
+                    <button
+                      type="button"
+                      onClick={handleExportCSV}
+                      className="bg-green-600 hover:bg-green-700 text-white font-bold px-5 py-2.5 rounded-xl shadow-md flex items-center gap-2 transition-all w-full sm:w-auto justify-center"
+                    >
+                      <Download className="w-5 h-5" /> ส่งออก Excel/CSV
+                    </button>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4">
+                    <div className="flex-1 flex flex-col gap-1">
+                      <label className="text-xs font-bold text-slate-500">จุดห้องน้ำ</label>
+                      <select
+                        className="border border-slate-300 rounded-xl p-2.5 font-medium outline-none focus:border-blue-500"
+                        value={filterLocation}
+                        onChange={e => setFilterLocation(e.target.value)}
+                      >
+                        <option value="all">ทั้งหมดรวมทุกจุด</option>
+                        {locations.map(l => <option key={l} value={l}>{l}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex-1 flex flex-col gap-1">
+                      <label className="text-xs font-bold text-slate-500">ตั้งแต่วันที่</label>
+                      <input
+                        type="date"
+                        className="border border-slate-300 rounded-xl p-2.5 font-medium outline-none focus:border-blue-500"
+                        value={dateRange.start}
+                        onChange={e => setDateRange({ ...dateRange, start: e.target.value })}
+                      />
+                    </div>
+                    <div className="flex-1 flex flex-col gap-1">
+                      <label className="text-xs font-bold text-slate-500">ถึงวันที่</label>
+                      <input
+                        type="date"
+                        className="border border-slate-300 rounded-xl p-2.5 font-medium outline-none focus:border-blue-500"
+                        value={dateRange.end}
+                        onChange={e => setDateRange({ ...dateRange, end: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  {}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col">
+                    <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between font-bold text-slate-700">
+                      <div className="flex items-center gap-2"><Filter className="w-4 h-4" /> พบข้อมูล {filteredReports.length} รายการ</div>
+                    </div>
+                    <div className="overflow-x-auto flex-1">
+                      <table className="w-full text-left text-sm whitespace-nowrap">
+                        <thead className="bg-white text-slate-500 border-b-2 border-slate-200">
+                          <tr>
+                            <th className="p-4 font-bold">วัน-เวลา</th>
+                            <th className="p-4 font-bold">จุดทำความสะอาด</th>
+                            <th className="p-4 font-bold">เจ้าหน้าที่</th>
+                            <th className="p-4 font-bold text-center">ผลประเมิน</th>
+                            <th className="p-4 font-bold text-center text-orange-600">แจ้งชำรุด</th>
+                            <th className="p-4 font-bold">ข้อแนะนำ/ความเสี่ยง</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 bg-white">
+                          {filteredReports.length === 0 ? (
+                            <tr><td colSpan="6" className="p-10 text-center text-slate-400 font-medium">ไม่พบข้อมูลในเงื่อนไขที่เลือก</td></tr>
+                          ) : filteredReports.map((report) => {
+                            const checklistObj = report.checklist || {};
+                            const total = CHECKLIST_ITEMS.length;
+                            const passed = CHECKLIST_ITEMS.filter(i => checklistObj[i.id]).length;
+                            const damagedItems = CHECKLIST_ITEMS.filter(item => report.damaged?.[item.id] > 0);
+                            const totalDmg = damagedItems.reduce((sum, item) => sum + report.damaged[item.id], 0);
+
+                            return (
+                              <tr key={report.id} className="hover:bg-slate-50 transition-colors">
+                                <td className="p-4">
+                                  <div className="font-bold text-slate-800">{report.date}</div>
+                                  <div className="text-xs font-medium text-slate-500">{report.time} น.</div>
+                                </td>
+                                <td className="p-4 font-medium text-slate-700">{report.location}</td>
+                                <td className="p-4 font-bold text-slate-700">{report.cleanerName}</td>
+                                <td className="p-4 text-center">
+                                  <div className="flex flex-col items-center gap-1.5">
+                                    <span className={`px-3 py-1 rounded-full text-xs font-bold border ${passed === total ? 'bg-green-50 text-green-700 border-green-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
+                                      {passed}/{total} ผ่าน
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setViewingReport(report)}
+                                      className="text-[11px] text-blue-600 font-bold hover:underline bg-blue-50 px-2 py-0.5 rounded"
+                                    >
+                                      ดูรายละเอียด
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="p-4 text-center">
+                                  {totalDmg > 0 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setViewingReport(report)}
+                                      className="flex flex-col items-center gap-1 mx-auto hover:bg-orange-50 p-1 rounded-lg transition-colors"
+                                    >
+                                      <span className="px-2.5 py-1 bg-orange-100 text-orange-700 text-xs font-bold border border-orange-200 rounded-full shadow-sm">
+                                        ชำรุด {totalDmg} ชิ้น
+                                      </span>
+                                      <span className="text-[10px] text-orange-600 max-w-[140px] truncate">
+                                        {damagedItems.map(i => `${i.label} (${report.damaged[i.id]})`).join(', ')}
+                                      </span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-slate-300">-</span>
+                                  )}
+                                </td>
+                                <td className="p-4 text-slate-600 max-w-[180px] truncate">{report.notes || '-'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {}
+              {/* ---------------- EXPORT LOGS ---------------- */}
+              {activeTab === 'export_logs' && (
+                <div className="space-y-4 max-w-5xl mx-auto">
+                  <h2 className="text-2xl font-bold text-slate-800 mb-4">ประวัติการดึงข้อมูล (Export Logs)</h2>
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm whitespace-nowrap">
+                        <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+                          <tr>
+                            <th className="p-4 font-bold">วัน-เวลาที่ดึงข้อมูล</th>
+                            <th className="p-4 font-bold">จุดที่เลือก</th>
+                            <th className="p-4 font-bold">ช่วงวันที่</th>
+                            <th className="p-4 font-bold text-center">จำนวนรายการ</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 bg-white">
+                          {exportLogs.length === 0 ? (
+                            <tr><td colSpan="4" className="p-10 text-center text-slate-400 font-medium">ยังไม่มีประวัติการส่งออกไฟล์</td></tr>
+                          ) : exportLogs.map(log => (
+                            <tr key={log.id} className="hover:bg-slate-50">
+                              <td className="p-4 font-bold text-slate-800">{log.timestamp}</td>
+                              <td className="p-4 text-slate-600">{log.filterLocation}</td>
+                              <td className="p-4 text-slate-600">{log.dateStart} ถึง {log.dateEnd}</td>
+                              <td className="p-4 text-center font-bold text-blue-700 bg-blue-50/30">{log.recordCount}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {}
+              {/* ---------------- SETTINGS ---------------- */}
+              {activeTab === 'settings' && (
+                <div className="space-y-6 max-w-3xl mx-auto">
+                  <h2 className="text-2xl font-bold text-slate-800">ตั้งค่าระบบ</h2>
+
+                  {/* สถานะการเชื่อมต่อ Google Sheets */}
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h3 className="text-lg font-bold text-slate-800 mb-3 flex items-center gap-2">
+                      <Wifi className="text-blue-600 w-5 h-5" /> สถานะการเชื่อมต่อฐานข้อมูล Google Sheets
+                    </h3>
+                    <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${connectionStatus === 'connected' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                      <div>
+                        <div className="font-bold text-sm">
+                          {connectionStatus === 'connected' ? 'เชื่อมต่อกับ Google Apps Script สำเร็จ (พร้อมใช้งาน)' : 'ไม่สามารถดึงข้อมูลจาก Google Sheets ได้'}
+                        </div>
+                        <div className="text-xs opacity-80 mt-1 break-all">
+                          จำนวนจุดห้องน้ำ: {locations.length} จุด | รายงานในระบบ: {reports.length} รายการ
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onRefreshData(true)}
+                        className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 font-bold text-xs hover:bg-slate-50 shadow-sm whitespace-nowrap"
+                      >
+                        ทดสอบเชื่อมต่อใหม่
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* จัดการจุดห้องน้ำ */}
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                      <MapPin className="text-blue-600 w-5 h-5" /> จัดการจุดประเมิน (ห้องน้ำ)
+                    </h3>
+                    <form onSubmit={handleAddLocation} className="flex gap-3 mb-6">
+                      <input
+                        type="text"
+                        placeholder="พิมพ์ชื่อจุดประเมินใหม่..."
+                        className="flex-1 p-3 border border-slate-300 rounded-xl outline-none focus:border-blue-500 font-medium"
+                        value={newLocationInput}
+                        onChange={e => setNewLocationInput(e.target.value)}
+                      />
+                      <button type="submit" className="bg-green-600 hover:bg-green-700 text-white font-bold px-5 rounded-xl shadow-md transition-colors whitespace-nowrap">
+                        + เพิ่มจุด
+                      </button>
+                    </form>
+                    <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                      {locations.map(loc => (
+                        <div key={loc} className="flex justify-between items-center p-3.5 bg-slate-50 border border-slate-200 rounded-xl hover:bg-white transition-all">
+                          <span className="font-bold text-slate-700">{loc}</span>
+                          <button
+                            type="button"
+                            onClick={() => setLocationToDelete(loc)}
+                            className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors"
+                            title="ลบจุดนี้"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {}
+                  {/* เปลี่ยนรหัสผ่าน Admin */}
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <Settings className="text-blue-600 w-5 h-5" /> เปลี่ยนรหัสผ่าน Admin
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setShowSettingPasswords(!showSettingPasswords)}
+                        className="text-xs font-bold text-slate-500 hover:text-slate-700 flex items-center gap-1"
+                      >
+                        {showSettingPasswords ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        {showSettingPasswords ? 'ซ่อนรหัส' : 'ดูรหัสที่พิมพ์'}
+                      </button>
+                    </div>
+                    {pwdState.msg && (
+                      <div className={`p-4 rounded-xl mb-4 text-sm font-bold border ${pwdState.type === 'error' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-green-50 text-green-600 border-green-200'}`}>
+                        {pwdState.msg}
+                      </div>
+                    )}
+                    <form onSubmit={handleChangePassword} className="space-y-4">
+                      <input
+                        type={showSettingPasswords ? "text" : "password"}
+                        placeholder="รหัสผ่านเดิม"
+                        required
+                        className="w-full p-3 border border-slate-300 rounded-xl outline-none focus:border-blue-500"
+                        value={pwdState.old}
+                        onChange={e => setPwdState({ ...pwdState, old: e.target.value, msg: '' })}
+                      />
+                      <input
+                        type={showSettingPasswords ? "text" : "password"}
+                        placeholder="รหัสผ่านใหม่ (6 ตัวอักษรขึ้นไป)"
+                        required
+                        className="w-full p-3 border border-slate-300 rounded-xl outline-none focus:border-blue-500"
+                        value={pwdState.new}
+                        onChange={e => setPwdState({ ...pwdState, new: e.target.value, msg: '' })}
+                      />
+                      <input
+                        type={showSettingPasswords ? "text" : "password"}
+                        placeholder="ยืนยันรหัสผ่านใหม่"
+                        required
+                        className="w-full p-3 border border-slate-300 rounded-xl outline-none focus:border-blue-500"
+                        value={pwdState.confirm}
+                        onChange={e => setPwdState({ ...pwdState, confirm: e.target.value, msg: '' })}
+                      />
+                      <button type="submit" className="bg-blue-600 text-white font-bold py-3 px-6 rounded-xl shadow-md hover:bg-blue-700 transition-colors w-full sm:w-auto">
+                        บันทึกรหัสผ่านใหม่
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {}
+            {/* ป๊อปอัพยืนยันการลบจุดห้องน้ำ */}
+            {locationToDelete && (
+              <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-sm text-center">
+                  <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Trash2 className="w-8 h-8 text-red-600" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">ยืนยันการลบจุดประเมิน?</h3>
+                  <p className="text-slate-600 text-sm mb-6">
+                    คุณต้องการลบจุด <span className="font-bold text-slate-800">"{locationToDelete}"</span> ออกจากระบบใช่หรือไม่?
+                  </p>
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setLocationToDelete(null)}
+                      className="flex-1 py-3 rounded-xl bg-slate-100 text-slate-700 font-bold hover:bg-slate-200 transition-colors"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmDeleteLocation}
+                      className="flex-1 py-3 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition-colors shadow-md"
+                    >
+                      ยืนยันลบ
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {}
+            {/* ป๊อปอัพดูรายละเอียดรายงานในฝั่ง Admin */}
+            {viewingReport && (
+              <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setViewingReport(null)}>
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                  <div className="p-4 bg-blue-600 text-white flex justify-between items-center">
+                    <h3 className="font-bold text-lg">รายละเอียดรายงานการประเมิน</h3>
+                    <button type="button" onClick={() => setViewingReport(null)} className="p-1.5 hover:bg-white/20 rounded-lg transition-colors">
+                      <X className="w-6 h-6" />
+                    </button>
+                  </div>
+                  <div className="p-5 overflow-y-auto bg-slate-50">
+                    <div className="flex justify-between items-center mb-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                      <div>
+                        <p className="text-xs font-bold text-slate-400 mb-1">จุดห้องน้ำ</p>
+                        <p className="font-bold text-slate-800 text-base">{viewingReport.location}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs font-bold text-slate-400 mb-1">{viewingReport.date}</p>
+                        <p className="font-bold text-slate-800 text-base">{viewingReport.time} น.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 mb-5 p-4 bg-white shadow-sm border border-slate-100 rounded-2xl">
+                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold">
+                        <User className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-400">เจ้าหน้าที่ผู้ปฏิบัติงาน</p>
+                        <p className="font-bold text-slate-800">{viewingReport.cleanerName}</p>
+                      </div>
+                    </div>
+
+                    {(() => {
+                      const dmgItems = CHECKLIST_ITEMS.filter(i => viewingReport.damaged?.[i.id] > 0);
+                      if (dmgItems.length > 0) {
+                        return (
+                          <div className="mb-5 p-4 bg-orange-50 border border-orange-200 rounded-2xl shadow-sm">
+                            <h4 className="font-bold text-orange-800 mb-2 flex items-center gap-2">
+                              <AlertCircle className="w-5 h-5" /> สรุปรายการอุปกรณ์ชำรุด
+                            </h4>
+                            <ul className="text-sm font-bold text-orange-700 space-y-1.5 pl-6 list-disc">
+                              {dmgItems.map(i => (
+                                <li key={`d-${i.id}`}>
+                                  {i.label} ชำรุด <span className="bg-orange-200 px-2 py-0.5 rounded">{viewingReport.damaged[i.id]} ชิ้น</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+
+                    {}
+                    <div className="space-y-4">
+                      {['เรื่องความสะอาด', 'เรื่องความสะดวก'].map((cat, idx) => (
+                        <div key={cat} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                          <h4 className="font-bold text-slate-800 mb-3 text-sm flex items-center gap-2">
+                            <span className={`w-5 h-5 rounded-full text-white flex items-center justify-center text-xs ${idx === 0 ? 'bg-blue-500' : 'bg-purple-500'}`}>{idx + 1}</span>
+                            {cat}
+                          </h4>
+                          <div className="space-y-2">
+                            {CHECKLIST_ITEMS.filter(i => i.category === cat).map(i => {
+                              const ok = viewingReport.checklist?.[i.id];
+                              const dmg = viewingReport.damaged?.[i.id] || 0;
+                              return (
+                                <div key={i.id} className="flex justify-between items-center p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+                                  <span className="font-medium text-slate-700 text-sm">{i.label}</span>
+                                  <div className="flex gap-2">
+                                    {dmg > 0 && (
+                                      <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-xs font-bold border border-orange-200">
+                                        ชำรุด {dmg}
+                                      </span>
+                                    )}
+                                    {ok ? (
+                                      <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold border border-green-200 flex items-center gap-1">
+                                        <CheckCircle2 className="w-3 h-3" /> {cat === 'เรื่องความสะดวก' ? 'มี' : 'ทำแล้ว'}
+                                      </span>
+                                    ) : (
+                                      <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-bold border border-red-200 flex items-center gap-1">
+                                        <X className="w-3 h-3" /> {cat === 'เรื่องความสะดวก' ? 'ไม่มี' : 'ไม่ได้ทำ'}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {viewingReport.notes && (
+                      <div className="mt-5 p-4 bg-yellow-50 border border-yellow-200 rounded-2xl">
+                        <p className="text-xs font-bold text-yellow-800 mb-1">ข้อแนะนำ / ความเสี่ยงที่พบ:</p>
+                        <p className="font-medium text-yellow-900">{viewingReport.notes}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // คอมโพเนนต์หลัก (Main App)
+    // ==========================================
+    function App() {
+      const [currentView, setCurrentView] = useState(() => localStorage.getItem('ps_current_view') || 'home');
+      const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => localStorage.getItem('ps_is_admin') === 'true');
+      const [adminPassword, setAdminPassword] = useState(() => localStorage.getItem('ps_admin_pw') || 'admin123');
+      
+      const [locations, setLocations] = useState(DEFAULT_LOCATIONS);
+      const [reports, setReports] = useState([]);
+      const [exportLogs, setExportLogs] = useState(() => JSON.parse(localStorage.getItem('ps_export_logs') || '[]'));
+      const [isLoading, setIsLoading] = useState(false);
+      const [connectionStatus, setConnectionStatus] = useState('checking'); // 'checking' | 'connected' | 'error'
+      const [toastMessage, setToastMessage] = useState(null);
+
+      useEffect(() => { localStorage.setItem('ps_current_view', currentView); }, [currentView]);
+      useEffect(() => { localStorage.setItem('ps_is_admin', isAdminLoggedIn); }, [isAdminLoggedIn]);
+      useEffect(() => { localStorage.setItem('ps_export_logs', JSON.stringify(exportLogs)); }, [exportLogs]);
+      useEffect(() => { localStorage.setItem('ps_admin_pw', adminPassword); }, [adminPassword]);
+
+      const showToast = useCallback((message, duration = 3000) => {
+        setToastMessage(message);
+        setTimeout(() => setToastMessage(null), duration);
+      }, []);
+
+      const fetchData = useCallback(async (showNotification = false) => {
+        setIsLoading(true);
+        try {
+          const response = await fetch(GOOGLE_SCRIPT_URL);
+          const result = await response.json();
+          
+          if (result.locations && result.locations.length > 0) {
+            setLocations(result.locations);
+          }
+          if (result.reports) {
+            // แปลงรูปแบบวันที่และเวลาจาก Google Sheets ให้ตรงมาตรฐานเสมอ
+            const normalized = result.reports.map((r, idx) => ({
+              ...r,
+              id: r.id || `rep-${idx}-${Date.now()}`,
+              date: normalizeDate(r.date),
+              time: normalizeTime(r.time),
+              checklist: r.checklist || {},
+              damaged: r.damaged || {}
+            }));
+            setReports(normalized);
+          }
+          setConnectionStatus('connected');
+          if (showNotification) showToast("อัปเดตข้อมูลล่าสุดเรียบร้อยแล้ว");
+        } catch (error) {
+          console.error("Fetch error:", error);
+          setConnectionStatus('error');
+          if (showNotification) showToast("ไม่สามารถดึงข้อมูลจาก Google Sheets ได้");
+        } finally {
+          setIsLoading(false);
+        }
+      }, [showToast]);
+
+      useEffect(() => {
+        fetchData(false);
+      }, [fetchData]);
+
+      const renderHome = () => (
+        <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-50">
+          <div className="max-w-md w-full bg-white rounded-3xl shadow-xl overflow-hidden">
+            <div className="bg-blue-600 p-8 text-center relative overflow-hidden">
+              <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg relative z-10">
+                <ShieldCheck className="w-12 h-12 text-blue-600" />
+              </div>
+              <h1 className="text-2xl font-bold text-white mb-2 relative z-10">รพ.โพนสวรรค์</h1>
+              <p className="text-blue-100 font-medium relative z-10">ระบบบันทึกการความสะอาดห้องน้ำ</p>
+              <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-blue-500 rounded-full opacity-50 blur-2xl"></div>
+              <div className="absolute top-0 -right-10 w-40 h-40 bg-blue-400 rounded-full opacity-50 blur-2xl"></div>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <button 
+                type="button"
+                onClick={() => setCurrentView('cleaner')}
+                className="w-full flex items-center p-4 bg-green-50 hover:bg-green-100 border border-green-200 rounded-2xl transition-all group"
+              >
+                <div className="bg-green-500 p-4 rounded-xl text-white group-hover:scale-110 transition-transform shadow-sm">
+                  <User className="w-7 h-7" />
+                </div>
+                <div className="ml-5 text-left">
+                  <div className="font-bold text-green-900 text-lg">สำหรับเจ้าหน้าที่</div>
+                  <div className="text-sm text-green-700 font-medium">เข้าประเมินและบันทึกข้อมูล</div>
+                </div>
+              </button>
+              
+              <button 
+                type="button"
+                onClick={() => setCurrentView(isAdminLoggedIn ? 'admin_dashboard' : 'admin_login')}
+                className="w-full flex items-center p-4 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-2xl transition-all group"
+              >
+                <div className="bg-blue-600 p-4 rounded-xl text-white group-hover:scale-110 transition-transform shadow-sm">
+                  <Settings className="w-7 h-7" />
+                </div>
+                <div className="ml-5 text-left">
+                  <div className="font-bold text-blue-900 text-lg">สำหรับผู้ดูแลระบบ</div>
+                  <div className="text-sm text-blue-700 font-medium">ดูรายงานและตั้งค่าระบบ</div>
+                </div>
+              </button>
+
+              {/* แถบแสดงสถานะการเชื่อมต่อฐานข้อมูลที่หน้าแรก */}
+              <div className="pt-2 flex items-center justify-center gap-2 text-xs font-medium text-slate-400">
+                {connectionStatus === 'checking' && (
+                  <><RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-500" /> กำลังเชื่อมต่อฐานข้อมูล...</>
+                )}
+                {connectionStatus === 'connected' && (
+                  <><Wifi className="w-3.5 h-3.5 text-green-500" /> เชื่อมต่อฐานข้อมูล Google Sheets พร้อมใช้งาน</>
+                )}
+                {connectionStatus === 'error' && (
+                  <><WifiOff className="w-3.5 h-3.5 text-amber-500" /> โหมดออฟไลน์ (โปรดตรวจสอบสิทธิ์ Google Script)</>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+
+      return (
+        <div>
+          {toastMessage && (
+            <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-[60] bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 font-bold">
+              <CheckCircle2 className="w-5 h-5 text-green-400" /> {toastMessage}
+            </div>
+          )}
+
+          {currentView === 'home' && renderHome()}
+
+          {currentView === 'cleaner' && (
+            <CleanerForm
+              locations={locations}
+              onBackHome={() => setCurrentView('home')}
+              onAddReportSuccess={(newReport) => {
+                setReports(prev => [newReport, ...prev]);
+              }}
+            />
+          )}
+
+          {currentView === 'admin_login' && (
+            <AdminLogin
+              adminPassword={adminPassword}
+              onLoginSuccess={() => {
+                setIsAdminLoggedIn(true);
+                setCurrentView('admin_dashboard');
+              }}
+              onBackHome={() => setCurrentView('home')}
+            />
+          )}
+
+          {currentView === 'admin_dashboard' && (
+            <AdminDashboard
+              locations={locations}
+              setLocations={setLocations}
+              reports={reports}
+              exportLogs={exportLogs}
+              setExportLogs={setExportLogs}
+              adminPassword={adminPassword}
+              setAdminPassword={setAdminPassword}
+              isLoading={isLoading}
+              connectionStatus={connectionStatus}
+              onRefreshData={fetchData}
+              onLogout={() => {
+                setIsAdminLoggedIn(false);
+                setCurrentView('home');
+              }}
+              showToast={showToast}
+            />
+          )}
+        </div>
+      );
+    }
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
