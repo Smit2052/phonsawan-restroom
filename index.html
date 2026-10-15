@@ -49,7 +49,7 @@
     import { 
       CheckCircle2, Settings, BarChart3, FileText, LogOut, User, MapPin, ShieldCheck, 
       Menu, X, Calendar, Filter, Download, History, RefreshCw, AlertCircle, Eye, EyeOff,
-      Wifi, WifiOff, Trash2
+      Wifi, WifiOff, Trash2, Search
     } from 'lucide-react';
 
     // ==========================================
@@ -114,7 +114,7 @@
     };
 
     // ==========================================
-    // คอมโพเนนต์ฝั่งเจ้าหน้าที่ (แยกออกนอก App เพื่อป้องกันหน้าจอรีเฟรชทับป๊อปอัพ)
+    // คอมโพเนนต์ฝั่งเจ้าหน้าที่ 
     // ==========================================
     function CleanerForm({ locations, onBackHome, onAddReportSuccess }) {
       const [formData, setFormData] = useState({
@@ -234,7 +234,6 @@
                   </div>
                 </div>
 
-                {}
                 <div className="space-y-6 pt-2">
                   {['เรื่องความสะอาด', 'เรื่องความสะดวก'].map((category, idx) => (
                     <div key={category} className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
@@ -270,7 +269,6 @@
                                   </button>
                                 </div>
                                 
-                                {}
                                 <div className="flex items-center justify-between sm:justify-center gap-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
                                   <span className="text-xs font-semibold text-slate-600">ชำรุด:</span>
                                   <div className="flex items-center bg-white border border-slate-300 rounded-md overflow-hidden shadow-sm">
@@ -306,7 +304,6 @@
                   ))}
                 </div>
 
-                {}
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1.5">ข้อแนะนำ / ความเสี่ยงที่พบ (ถ้ามี)</label>
                   <textarea 
@@ -333,7 +330,6 @@
             </div>
           </main>
 
-          {}
           {/* ป๊อปอัพสีเขียวเมื่อบันทึกสำเร็จ */}
           {showSuccessPopup && (
             <div className="fixed inset-0 bg-slate-900/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -459,7 +455,7 @@
       const [viewingReport, setViewingReport] = useState(null);
       const [locationToDelete, setLocationToDelete] = useState(null);
 
-      // Filter States
+      // Filter States (แยกข้อมูลที่พิมพ์ กับข้อมูลที่กดค้นหาแล้ว)
       const [filterLocation, setFilterLocation] = useState('all');
       const [dateRange, setDateRange] = useState(() => {
         const end = getTodayString();
@@ -467,6 +463,9 @@
         const start = `${startObj.getFullYear()}-${String(startObj.getMonth() + 1).padStart(2, '0')}-${String(startObj.getDate()).padStart(2, '0')}`;
         return { start, end };
       });
+      
+      const [hasSearched, setHasSearched] = useState(false);
+      const [activeFilters, setActiveFilters] = useState({ location: 'all', start: '', end: '' });
 
       // Settings States
       const [newLocationInput, setNewLocationInput] = useState('');
@@ -490,13 +489,24 @@
       const pendingLocationsCount = Math.max(0, totalLocationsCount - cleanedLocationsCount);
       const completionPercentage = totalLocationsCount === 0 ? 0 : Math.round((cleanedLocationsCount / totalLocationsCount) * 100);
 
+      // กรองข้อมูลเฉพาะเมื่อกดค้นหาแล้วเท่านั้น
       const filteredReports = useMemo(() => {
+        if (!hasSearched) return [];
         return reports.filter(r => {
-          const matchLoc = filterLocation === 'all' || r.location === filterLocation;
-          const matchDate = r.date >= dateRange.start && r.date <= dateRange.end;
+          const matchLoc = activeFilters.location === 'all' || r.location === activeFilters.location;
+          const matchDate = r.date >= activeFilters.start && r.date <= activeFilters.end;
           return matchLoc && matchDate;
         });
-      }, [reports, filterLocation, dateRange]);
+      }, [reports, hasSearched, activeFilters]);
+
+      const handleSearch = () => {
+        setActiveFilters({
+          location: filterLocation,
+          start: dateRange.start,
+          end: dateRange.end
+        });
+        setHasSearched(true);
+      };
 
       const handleChangePassword = (e) => {
         e.preventDefault();
@@ -558,6 +568,10 @@
       };
 
       const handleExportCSV = () => {
+        if (!hasSearched) {
+          showToast("กรุณากดค้นหาข้อมูลก่อนทำการส่งออกไฟล์");
+          return;
+        }
         if (filteredReports.length === 0) {
           showToast("ไม่มีข้อมูลในเงื่อนไขที่เลือก");
           return;
@@ -586,7 +600,7 @@
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute('download', `restroom_report_${dateRange.start}_to_${dateRange.end}.csv`);
+        link.setAttribute('download', `restroom_report_${activeFilters.start}_to_${activeFilters.end}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -594,9 +608,9 @@
         const newLog = {
           id: Date.now(),
           timestamp: new Date().toLocaleString('th-TH'),
-          filterLocation: filterLocation === 'all' ? 'ทั้งหมดรวมทุกจุด' : filterLocation,
-          dateStart: dateRange.start,
-          dateEnd: dateRange.end,
+          filterLocation: activeFilters.location === 'all' ? 'ทั้งหมดรวมทุกจุด' : activeFilters.location,
+          dateStart: activeFilters.start,
+          dateEnd: activeFilters.end,
           recordCount: filteredReports.length
         };
         setExportLogs(prev => [newLog, ...prev]);
@@ -648,7 +662,6 @@
             <div className="fixed inset-0 bg-slate-900/60 z-20 md:hidden backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)}></div>
           )}
 
-          {}
           <main className="flex-1 md:ml-64 flex flex-col h-screen overflow-hidden">
             <header className="bg-white p-4 border-b border-slate-200 flex items-center justify-between sticky top-0 z-10 shadow-sm">
               <div className="flex items-center gap-3 md:hidden">
@@ -658,7 +671,7 @@
                 <span className="font-bold text-slate-800">แอดมิน รพ.โพนสวรรค์</span>
               </div>
               <div className="hidden md:flex items-center gap-3">
-                <span className="font-bold text-slate-800 text-lg">รพ.โพนสวรรค์ - ระบบตรวจเช็คห้องน้ำ</span>
+                <span className="font-bold text-slate-800 text-lg">รพ.โพนสวรรค์ - ระบบบันทึกการความสะอาดห้องน้ำ</span>
                 {connectionStatus === 'connected' && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-200">
                     <Wifi className="w-3.5 h-3.5 text-green-600" /> เชื่อมต่อ Google Sheets แล้ว
@@ -684,7 +697,6 @@
               </div>
             </header>
 
-            {}
             <div className="flex-1 p-4 md:p-8 overflow-y-auto">
               {/* ---------------- DASHBOARD ---------------- */}
               {activeTab === 'overview' && (
@@ -739,7 +751,6 @@
                     </div>
                   </div>
 
-                  {}
                   <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                     <div className="bg-slate-50 p-4 border-b border-slate-200 font-bold text-slate-800">
                       สถานะรายจุด ประจำวันที่ {dashboardDate}
@@ -785,7 +796,6 @@
                 </div>
               )}
 
-              {}
               {/* ---------------- REPORTS ---------------- */}
               {activeTab === 'reports' && (
                 <div className="flex flex-col h-full space-y-4 max-w-7xl mx-auto">
@@ -800,8 +810,8 @@
                     </button>
                   </div>
 
-                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4">
-                    <div className="flex-1 flex flex-col gap-1">
+                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 items-end">
+                    <div className="flex-1 flex flex-col gap-1 w-full">
                       <label className="text-xs font-bold text-slate-500">จุดห้องน้ำ</label>
                       <select
                         className="border border-slate-300 rounded-xl p-2.5 font-medium outline-none focus:border-blue-500"
@@ -812,7 +822,7 @@
                         {locations.map(l => <option key={l} value={l}>{l}</option>)}
                       </select>
                     </div>
-                    <div className="flex-1 flex flex-col gap-1">
+                    <div className="flex-1 flex flex-col gap-1 w-full">
                       <label className="text-xs font-bold text-slate-500">ตั้งแต่วันที่</label>
                       <input
                         type="date"
@@ -821,7 +831,7 @@
                         onChange={e => setDateRange({ ...dateRange, start: e.target.value })}
                       />
                     </div>
-                    <div className="flex-1 flex flex-col gap-1">
+                    <div className="flex-1 flex flex-col gap-1 w-full">
                       <label className="text-xs font-bold text-slate-500">ถึงวันที่</label>
                       <input
                         type="date"
@@ -830,12 +840,21 @@
                         onChange={e => setDateRange({ ...dateRange, end: e.target.value })}
                       />
                     </div>
+                    <button
+                      type="button"
+                      onClick={handleSearch}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-2 transition-all w-full md:w-auto h-[46px]"
+                    >
+                      <Search className="w-5 h-5" /> ค้นหา
+                    </button>
                   </div>
 
-                  {}
                   <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col">
                     <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between font-bold text-slate-700">
-                      <div className="flex items-center gap-2"><Filter className="w-4 h-4" /> พบข้อมูล {filteredReports.length} รายการ</div>
+                      <div className="flex items-center gap-2">
+                        <Filter className="w-4 h-4" /> 
+                        {hasSearched ? `พบข้อมูล ${filteredReports.length} รายการ` : 'ข้อมูลการประเมิน'}
+                      </div>
                     </div>
                     <div className="overflow-x-auto flex-1">
                       <table className="w-full text-left text-sm whitespace-nowrap">
@@ -850,8 +869,19 @@
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 bg-white">
-                          {filteredReports.length === 0 ? (
-                            <tr><td colSpan="6" className="p-10 text-center text-slate-400 font-medium">ไม่พบข้อมูลในเงื่อนไขที่เลือก</td></tr>
+                          {!hasSearched ? (
+                            <tr>
+                              <td colSpan="6" className="p-16 text-center text-slate-400 font-medium">
+                                <Search className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+                                กรุณาเลือกเงื่อนไขและกดปุ่ม <span className="font-bold text-slate-500">"ค้นหา"</span> เพื่อดูข้อมูล
+                              </td>
+                            </tr>
+                          ) : filteredReports.length === 0 ? (
+                            <tr>
+                              <td colSpan="6" className="p-10 text-center text-slate-400 font-medium">
+                                ไม่พบข้อมูลในเงื่อนไขที่เลือก
+                              </td>
+                            </tr>
                           ) : filteredReports.map((report) => {
                             const checklistObj = report.checklist || {};
                             const total = CHECKLIST_ITEMS.length;
@@ -910,7 +940,6 @@
                 </div>
               )}
 
-              {}
               {/* ---------------- EXPORT LOGS ---------------- */}
               {activeTab === 'export_logs' && (
                 <div className="space-y-4 max-w-5xl mx-auto">
@@ -944,13 +973,11 @@
                 </div>
               )}
 
-              {}
               {/* ---------------- SETTINGS ---------------- */}
               {activeTab === 'settings' && (
                 <div className="space-y-6 max-w-3xl mx-auto">
                   <h2 className="text-2xl font-bold text-slate-800">ตั้งค่าระบบ</h2>
 
-                  {/* สถานะการเชื่อมต่อ Google Sheets */}
                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                     <h3 className="text-lg font-bold text-slate-800 mb-3 flex items-center gap-2">
                       <Wifi className="text-blue-600 w-5 h-5" /> สถานะการเชื่อมต่อฐานข้อมูล Google Sheets
@@ -974,7 +1001,6 @@
                     </div>
                   </div>
 
-                  {/* จัดการจุดห้องน้ำ */}
                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                     <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                       <MapPin className="text-blue-600 w-5 h-5" /> จัดการจุดประเมิน (ห้องน้ำ)
@@ -1008,8 +1034,6 @@
                     </div>
                   </div>
 
-                  {}
-                  {/* เปลี่ยนรหัสผ่าน Admin */}
                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
@@ -1063,7 +1087,6 @@
               )}
             </div>
 
-            {}
             {/* ป๊อปอัพยืนยันการลบจุดห้องน้ำ */}
             {locationToDelete && (
               <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -1095,7 +1118,6 @@
               </div>
             )}
 
-            {}
             {/* ป๊อปอัพดูรายละเอียดรายงานในฝั่ง Admin */}
             {viewingReport && (
               <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setViewingReport(null)}>
@@ -1149,7 +1171,6 @@
                       return null;
                     })()}
 
-                    {}
                     <div className="space-y-4">
                       {['เรื่องความสะอาด', 'เรื่องความสะดวก'].map((cat, idx) => (
                         <div key={cat} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
